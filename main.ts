@@ -1,0 +1,170 @@
+// Overboard Obsidian plugin — thin client that embeds Overboard Studio
+// boards inside Obsidian notes via an iframe pointing at
+// https://overboard.studio/embed/board/<id>.
+//
+// Security model:
+//   - Plugin holds NO credentials, NO tokens, NO board data.
+//   - The user authenticates inside the iframe (overboard.studio cookies).
+//   - Iframe is sandboxed (allow-scripts, allow-same-origin, allow-popups
+//     for OAuth, allow-forms). No filesystem or top-level navigation.
+//   - All proprietary logic (AI generation, board rendering engine, real-
+//     time collab, user data) stays on overboard.studio servers — the
+//     plugin source code is fully open and contains zero IP.
+//
+// Usage in a note:
+//
+//     ```overboard
+//     https://overboard.studio/board/<board-id>
+//     ```
+//
+// or just paste a board URL on its own line — the plugin recognises
+// overboard.studio/board/* URLs.
+
+import { App, Plugin, PluginSettingTab, Setting, MarkdownPostProcessorContext } from 'obsidian';
+
+interface OverboardSettings {
+	embedHeight: number;     // default iframe height in px
+	allowFullscreen: boolean;
+}
+
+const DEFAULT_SETTINGS: OverboardSettings = {
+	embedHeight: 600,
+	allowFullscreen: true,
+};
+
+const HOST = 'https://overboard.studio';
+const BOARD_URL_RE = /^https:\/\/overboard\.studio\/board\/([a-zA-Z0-9_-]+)/;
+const VALID_BOARD_ID_RE = /^[a-zA-Z0-9_-]+$/;
+
+export default class OverboardPlugin extends Plugin {
+	settings: OverboardSettings = DEFAULT_SETTINGS;
+
+	async onload() {
+		await this.loadSettings();
+
+		// Code-block processor: ```overboard\n<url-or-id>\n```
+		this.registerMarkdownCodeBlockProcessor('overboard', (source, el, ctx) => {
+			this.renderBoard(source.trim(), el, ctx);
+		});
+
+		// Insert-board command — prompts for URL, inserts a code block
+		this.addCommand({
+			id: 'insert-overboard-board',
+			name: 'Insert Overboard board',
+			editorCallback: (editor) => {
+				const url = window.prompt('Paste an Overboard board URL (e.g. https://overboard.studio/board/abc123):');
+				if (!url || !url.trim()) return;
+				editor.replaceSelection('```overboard\n' + url.trim() + '\n```\n');
+			},
+		});
+
+		// "Open Overboard" command — launches a new board in your browser
+		this.addCommand({
+			id: 'open-new-overboard',
+			name: 'Open new Overboard board in browser',
+			callback: () => window.open(HOST + '/boards', '_blank'),
+		});
+
+		this.addSettingTab(new OverboardSettingTab(this.app, this));
+	}
+
+	async loadSettings() {
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+	}
+
+	async saveSettings() {
+		await this.saveData(this.settings);
+	}
+
+	renderBoard(input: string, el: HTMLElement, _ctx: MarkdownPostProcessorContext) {
+		// Accept either a full URL or a bare board ID
+		let boardId: string | null = null;
+		const urlMatch = input.match(BOARD_URL_RE);
+		if (urlMatch) {
+			boardId = urlMatch[1];
+		} else if (VALID_BOARD_ID_RE.test(input) && input.length >= 4 && input.length <= 64) {
+			boardId = input;
+		}
+		if (!boardId) {
+			const err = el.createDiv({ cls: 'overboard-error' });
+			err.setText('Overboard: invalid board URL or ID. Expected https://overboard.studio/board/<id> or a bare board ID.');
+			err.style.cssText = 'padding: 12px; border: 1px solid #fecaca; background: #fef2f2; color: #991b1b; border-radius: 8px; font-size: 13px;';
+			return;
+		}
+
+		const wrap = el.createDiv({ cls: 'overboard-embed' });
+		wrap.style.cssText = 'border: 1px solid var(--background-modifier-border); border-radius: 10px; overflow: hidden; margin: 8px 0;';
+
+		const header = wrap.createDiv({ cls: 'overboard-embed-header' });
+		header.style.cssText = 'display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: var(--background-secondary); font-size: 12px; color: var(--text-muted);';
+		header.createSpan({ text: 'Overboard board' });
+		const openLink = header.createEl('a', {
+			text: 'Open in browser \u2197',
+			href: `${HOST}/board/${encodeURIComponent(boardId)}`,
+		});
+		openLink.setAttr('target', '_blank');
+		openLink.setAttr('rel', 'noopener noreferrer');
+		openLink.style.cssText = 'color: var(--text-accent); text-decoration: none; font-weight: 500;';
+
+		const iframe = wrap.createEl('iframe');
+		iframe.setAttr('src', `${HOST}/embed/board/${encodeURIComponent(boardId)}`);
+		iframe.setAttr('sandbox', 'allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox');
+		iframe.setAttr('referrerpolicy', 'no-referrer-when-downgrade');
+		iframe.setAttr('loading', 'lazy');
+		iframe.setAttr('title', 'Overboard board');
+		if (this.settings.allowFullscreen) iframe.setAttr('allow', 'fullscreen');
+		iframe.style.cssText = `width: 100%; height: ${this.settings.embedHeight}px; border: 0; display: block; background: white;`;
+	}
+}
+
+class OverboardSettingTab extends PluginSettingTab {
+	plugin: OverboardPlugin;
+
+	constructor(app: App, plugin: OverboardPlugin) {
+		super(app, plugin);
+		this.plugin = plugin;
+	}
+
+	display() {
+		const { containerEl } = this;
+		containerEl.empty();
+		containerEl.createEl('h2', { text: 'Overboard' });
+
+		new Setting(containerEl)
+			.setName('Embed height (px)')
+			.setDesc('Height of the iframe inside your notes. Boards scroll/zoom internally so 600 is a reasonable default.')
+			.addText((t) =>
+				t
+					.setPlaceholder('600')
+					.setValue(String(this.plugin.settings.embedHeight))
+					.onChange(async (v) => {
+						const n = parseInt(v, 10);
+						if (Number.isFinite(n) && n >= 200 && n <= 2000) {
+							this.plugin.settings.embedHeight = n;
+							await this.plugin.saveSettings();
+						}
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName('Allow fullscreen')
+			.setDesc('Let embedded boards request fullscreen mode.')
+			.addToggle((t) =>
+				t
+					.setValue(this.plugin.settings.allowFullscreen)
+					.onChange(async (v) => {
+						this.plugin.settings.allowFullscreen = v;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		containerEl.createEl('p', {
+			text: 'You sign in to Overboard inside the embedded iframe — the plugin never sees your credentials. All board data, AI generation, and collaboration runs on overboard.studio.',
+			cls: 'setting-item-description',
+		});
+		containerEl.createEl('a', {
+			text: 'Get an account at overboard.studio',
+			href: HOST,
+		}).setAttr('target', '_blank');
+	}
+}

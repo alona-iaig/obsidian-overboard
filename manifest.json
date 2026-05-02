@@ -1,0 +1,11 @@
+{
+  "id": "overboard",
+  "name": "Overboard",
+  "version": "0.1.0",
+  "minAppVersion": "1.4.0",
+  "description": "Embed Overboard Studio AI whiteboards directly inside your Obsidian notes. Sketch, generate diagrams with AI, collaborate in real time — without leaving Obsidian.",
+  "author": "Overboard Studio",
+  "authorUrl": "https://overboard.studio",
+  "fundingUrl": "https://overboard.studio/pricing",
+  "isDesktopOnly": false
+}
