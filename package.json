@@ -1,12 +1,19 @@
 {
   "name": "obsidian-overboard",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Embed Overboard Studio AI whiteboards inside Obsidian notes",
   "main": "main.js",
   "scripts": {
     "build": "esbuild main.ts --bundle --external:obsidian --format=cjs --target=es2020 --outfile=main.js"
   },
-  "keywords": ["obsidian", "obsidian-plugin", "whiteboard", "diagram", "ai", "overboard"],
+  "keywords": [
+    "obsidian",
+    "obsidian-plugin",
+    "whiteboard",
+    "diagram",
+    "ai",
+    "overboard"
+  ],
   "author": "Overboard Studio",
   "license": "MIT",
   "devDependencies": {
